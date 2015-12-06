@@ -7,7 +7,7 @@ http://testoptimal.com/ref/GraphTheory%20Techniques%20In%20Model-Based%20Testing
 
 For each node that has positive polarity, a BFS is performed to find the nearest node that has negative polarity and create the additional edges between both nodes.
 
-Once all nodes have a polarity equal to 0, a DFS is performed to visit all arcs/edges from selected starting node and complete a cycle (all optimal solutions are searched).
+Once all nodes have a polarity equal to 0, a DFS is performed to visit all arcs/edges from selected starting node and complete a cycle (the optimal solution is searched).
 
 Posted as solution to the Reddit Dailyprogrammer Hard Challenge #243:
 
