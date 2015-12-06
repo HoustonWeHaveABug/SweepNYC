@@ -366,7 +366,7 @@ path_t *path;
 
 void search_circuit(node_t *start, int manhattan) {
 int type;
-unsigned long n_visited_min = n_paths, n_initial_visited, n_visited;
+unsigned long n_visited_min = n_paths+1, n_initial_visited, n_visited;
 path_t *path;
 node_t *node;
 	add_call(1+manhattan, start, NULL, 0UL, 0UL);
@@ -378,8 +378,8 @@ node_t *node;
 		n_visited = call_top->n_visited;
 		call_top--;
 		if (type == 1) {
-			if (n_initial_visited < n_open_edges || *(q_node_out-1) != start) {
-				if (n_visited < n_visited_min) {
+			if (n_visited < n_visited_min) {
+				if (n_initial_visited < n_open_edges || *(q_node_out-1) != start) {
 					for (path = node->paths; path < node->path_out; path++) {
 						if (path->edge && !path->edge->visited) {
 							add_call(5, NULL, path, n_initial_visited+1, n_visited+1);
@@ -393,14 +393,14 @@ node_t *node;
 						}
 					}
 				}
-			}
-			else {
-				print_circuit(start, n_visited, &n_visited_min);
+				else {
+					print_circuit(start, n_visited, &n_visited_min);
+				}
 			}
 		}
 		else if (type == 2) {
-			if (n_initial_visited < n_initial_paths || *(q_node_out-1) != start) {
-				if (n_visited < n_visited_min) {
+			if (n_visited < n_visited_min) {
+				if (n_initial_visited < n_initial_paths || *(q_node_out-1) != start) {
 					for (path = node->paths; path < node->path_out; path++) {
 						if (!path->visited) {
 							if (path->edge) {
@@ -416,9 +416,9 @@ node_t *node;
 						}
 					}
 				}
-			}
-			else {
-				print_circuit(start, n_visited, &n_visited_min);
+				else {
+					print_circuit(start, n_visited, &n_visited_min);
+				}
 			}
 		}
 		else if (type == 3) {
@@ -464,9 +464,7 @@ node_t **q_node;
 		print_node(*q_node);
 	}
 	printf("\nLength %lu\n", n_visited);
-	if (*n_visited_min > n_visited) {
-		*n_visited_min = n_visited;
-	}
+	*n_visited_min = n_visited;
 }
 
 void print_node(node_t *node) {
