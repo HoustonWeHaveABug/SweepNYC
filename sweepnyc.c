@@ -3,9 +3,16 @@
 
 #define N_EDGE_TYPES 4UL
 
+struct edge_s {
+	int type;
+	int visited;
+};
+typedef struct edge_s edge_t;
+
 typedef struct node_s node_t;
 
 struct path_s {
+	edge_t *edge;
 	node_t *to;
 	int visited;
 };
@@ -26,32 +33,36 @@ struct call_s {
 	int type;
 	node_t *node;
 	path_t *path;
+	unsigned long n_initial_visited;
+	unsigned long n_visited;
 };
 typedef struct call_s call_t;
 
 int read_street(unsigned long);
 int read_node(unsigned long, unsigned long);
-path_t *add_path(node_t *, node_t *);
-void set_path(path_t *, node_t *);
+path_t *add_path(node_t *, edge_t *, node_t *);
+void set_path(path_t *, edge_t *, node_t *);
 int read_edges(void);
 int read_edge(const int *, unsigned long);
 int read_separator(void);
 node_t *positive_node(void);
 int negative_polarity(node_t *);
 void add_q_nodes(node_t *);
-void search_circuit(node_t *);
-void add_call(int, node_t *, path_t *);
+void search_circuit(node_t *, int);
+void add_call(int, node_t *, path_t *, unsigned long, unsigned long);
+void print_circuit(node_t *, unsigned long, unsigned long *);
 void print_node(node_t *);
 void free_data(void);
 
-int *edges = NULL, *current_edge;
-unsigned long n_streets, n_avenues, n_nodes, n_paths, n_calls;
-node_t *nodes = NULL, *node_out, *current_node, **q_nodes = NULL, **q_node_out, **q_node_top;
-call_t *calls, *call_top;
+unsigned long n_avenues, n_open_edges, n_initial_paths, n_paths;
+edge_t *edges = NULL, *current_edge;
+node_t *nodes = NULL, *node_out, *current_node, **q_nodes = NULL, **q_node_out;
+call_t *calls = NULL, *call_top;
 
 int main(void) {
-unsigned long start_street, start_avenue, n_edges, street;
-node_t *node, *positive, **q_node;
+int manhattan;
+unsigned long n_streets, start_street, start_avenue, n_edges, n_nodes, street, n_calls;
+node_t *node, *positive, **q_node, **q_nodes_tmp;
 	if (scanf("%lu", &n_streets) != 1 || n_streets < 1) {
 		fprintf(stderr, "Invalid number of streets\n");
 		return EXIT_FAILURE;
@@ -70,7 +81,7 @@ node_t *node, *positive, **q_node;
 	}
 	fgetc(stdin);
 	n_edges = n_streets*(n_streets-1)+n_avenues*(n_avenues-1);
-	edges = malloc(sizeof(int)*n_edges);
+	edges = malloc(sizeof(edge_t)*n_edges);
 	if (!edges) {
 		fprintf(stderr, "Cannot allocate memory for edges\n");
 		return EXIT_FAILURE;
@@ -83,6 +94,8 @@ node_t *node, *positive, **q_node;
 		return EXIT_FAILURE;
 	}
 	node_out = nodes+n_nodes;
+	n_open_edges = 0;
+	n_initial_paths = 0;
 	n_paths = 0;
 	current_edge = edges;
 	current_node = nodes;
@@ -100,13 +113,12 @@ node_t *node, *positive, **q_node;
 			return EXIT_FAILURE;
 		}
 	}
-	printf("Number of paths %lu\n", n_paths);
-	for (node = nodes; node < node_out && node->n_paths; node++);
-	if (node < node_out) {
-		fprintf(stderr, "No solution\n");
+	if (scanf("%d", &manhattan) != 1 || manhattan < 0 || manhattan > 1) {
+		fprintf(stderr, "Invalid Manhattan flag\n");
 		free_data();
 		return EXIT_FAILURE;
 	}
+	printf("Number of initial paths %lu\n", n_initial_paths);
 	q_nodes = malloc(sizeof(node_t *)*n_nodes);
 	if (!q_nodes) {
 		fprintf(stderr, "Cannot allocate memory for queue nodes\n");
@@ -129,12 +141,12 @@ node_t *node, *positive, **q_node;
 		}
 		if (q_node < q_node_out) {
 			for (node = *q_node; node->from != positive; node = node->from) {
-				if (!add_path(node->from, node)) {
+				if (!add_path(node->from, NULL, node)) {
 					free_data();
 					return EXIT_FAILURE;
 				}
 			}
-			if (!add_path(positive, node)) {
+			if (!add_path(positive, NULL, node)) {
 				free_data();
 				return EXIT_FAILURE;
 			}
@@ -146,17 +158,15 @@ node_t *node, *positive, **q_node;
 		}
 		positive = positive_node();
 	}
-	free(q_nodes);
-	q_nodes = NULL;
 	printf("Number of paths after polarity reducing %lu\n", n_paths);
-	q_nodes = malloc(sizeof(node_t *)*n_paths);
-	if (!q_nodes) {
-		fprintf(stderr, "Cannot allocate memory for queue nodes\n");
+	q_nodes_tmp = realloc(q_nodes, sizeof(node_t *)*n_paths);
+	if (!q_nodes_tmp) {
+		fprintf(stderr, "Cannot reallocate memory for queue nodes\n");
 		free_data();
 		return EXIT_FAILURE;
 	}
-	q_node_out = q_nodes+n_paths;
-	q_node_top = q_nodes;
+	q_nodes = q_nodes_tmp;
+	q_node_out = q_nodes;
 	n_calls = n_paths*6;
 	calls = malloc(sizeof(call_t)*n_calls);
 	if (!calls) {
@@ -165,8 +175,7 @@ node_t *node, *positive, **q_node;
 		return EXIT_FAILURE;
 	}
 	call_top = calls-1;
-	search_circuit(nodes+(start_street-1)*n_streets+start_avenue-1);
-	free(calls);
+	search_circuit(nodes+(start_street-1)*n_streets+start_avenue-1, manhattan);
 	free_data();
 	return EXIT_SUCCESS;
 }
@@ -196,7 +205,7 @@ unsigned long avenue;
 }
 
 int read_node(unsigned long street, unsigned long avenue) {
-int *edge;
+edge_t *edge;
 node_t *node;
 	if (fgetc(stdin) != 'o') {
 		fprintf(stderr, "Invalid node\n");
@@ -209,21 +218,21 @@ node_t *node;
 	if (street > 1) {
 		edge = current_edge-n_avenues;
 		node = current_node-n_avenues;
-		if (*edge == '|') {
-			if (!add_path(current_node, node)) {
+		if (edge->type == '|') {
+			if (!add_path(current_node, edge, node)) {
 				return 0;
 			}
-			if (!add_path(node, current_node)) {
-				return 0;
-			}
-		}
-		else if (*edge == '^') {
-			if (!add_path(current_node, node)) {
+			if (!add_path(node, edge, current_node)) {
 				return 0;
 			}
 		}
-		else if (*edge == 'v') {
-			if (!add_path(node, current_node)) {
+		else if (edge->type == '^') {
+			if (!add_path(current_node, edge, node)) {
+				return 0;
+			}
+		}
+		else if (edge->type == 'v') {
+			if (!add_path(node, edge, current_node)) {
 				return 0;
 			}
 		}
@@ -231,21 +240,21 @@ node_t *node;
 	if (avenue > 1) {
 		edge = current_edge-1;
 		node = current_node-1;
-		if (*edge == '-') {
-			if (!add_path(current_node, node)) {
+		if (edge->type == '-') {
+			if (!add_path(current_node, edge, node)) {
 				return 0;
 			}
-			if (!add_path(node, current_node)) {
-				return 0;
-			}
-		}
-		else if (*edge == '<') {
-			if (!add_path(current_node, node)) {
+			if (!add_path(node, edge, current_node)) {
 				return 0;
 			}
 		}
-		else if (*edge == '>') {
-			if (!add_path(node, current_node)) {
+		else if (edge->type == '<') {
+			if (!add_path(current_node, edge, node)) {
+				return 0;
+			}
+		}
+		else if (edge->type == '>') {
+			if (!add_path(node, edge, current_node)) {
 				return 0;
 			}
 		}
@@ -254,17 +263,17 @@ node_t *node;
 	return 1;
 }
 
-path_t *add_path(node_t *from, node_t *to) {
-path_t *tmp;
+path_t *add_path(node_t *from, edge_t *edge, node_t *to) {
+path_t *paths_tmp;
 	if (from->n_paths) {
-		tmp = realloc(from->paths, sizeof(path_t)*(from->n_paths+1));
-		if (!tmp) {
+		paths_tmp = realloc(from->paths, sizeof(path_t)*(from->n_paths+1));
+		if (!paths_tmp) {
 			fprintf(stderr, "Cannot reallocate memory for paths\n");
 			from->n_paths = 0;
 			free(from->paths);
 			return NULL;
 		}
-		from->paths = tmp;
+		from->paths = paths_tmp;
 	}
 	else {
 		from->paths = malloc(sizeof(path_t));
@@ -273,16 +282,20 @@ path_t *tmp;
 			return NULL;
 		}
 	}
-	set_path(from->paths+from->n_paths, to);
+	set_path(from->paths+from->n_paths, edge, to);
 	from->n_paths++;
 	from->path_out = from->paths+from->n_paths;
 	from->polarity--;
 	to->polarity++;
+	if (edge) {
+		n_initial_paths++;
+	}
 	n_paths++;
 	return from->paths;
 }
 
-void set_path(path_t *path, node_t *to) {
+void set_path(path_t *path, edge_t *edge, node_t *to) {
+	path->edge = edge;
 	path->to = to;
 	path->visited = 0;
 }
@@ -313,7 +326,12 @@ int type_read = fgetc(stdin);
 		fprintf(stderr, "Invalid edge\n");
 		return 0;
 	}
-	*current_edge++ = type_read;
+	if (type_read != 'o') {
+		n_open_edges++;
+	}
+	current_edge->type = type_read;
+	current_edge->visited = 0;
+	current_edge++;
 	return 1;
 }
 
@@ -346,61 +364,120 @@ path_t *path;
 	}
 }
 
-void search_circuit(node_t *start) {
-int found = 0, type;
+void search_circuit(node_t *start, int manhattan) {
+int type;
+unsigned long n_visited_min = n_paths, n_initial_visited, n_visited;
 path_t *path;
-node_t *node, **q_node;
-	add_call(1, start, NULL);
-	while (call_top >= calls && !found) {
+node_t *node;
+	add_call(1+manhattan, start, NULL, 0UL, 0UL);
+	while (call_top >= calls) {
 		type = call_top->type;
 		node = call_top->node;
 		path = call_top->path;
+		n_initial_visited = call_top->n_initial_visited;
+		n_visited = call_top->n_visited;
 		call_top--;
 		if (type == 1) {
-			if (q_node_top < q_node_out) {
-				for (path = node->paths; path < node->path_out; path++) {
-					if (!path->visited) {
-						add_call(3, NULL, path);
-						add_call(1, path->to, NULL);
-						add_call(2, NULL, path);
+			if (n_initial_visited < n_open_edges || *(q_node_out-1) != start) {
+				if (n_visited < n_visited_min) {
+					for (path = node->paths; path < node->path_out; path++) {
+						if (path->edge && !path->edge->visited) {
+							add_call(5, NULL, path, n_initial_visited+1, n_visited+1);
+							add_call(1, path->to, NULL, n_initial_visited+1, n_visited+1);
+							add_call(3, NULL, path, n_initial_visited+1, n_visited+1);
+						}
+						else if (!path->visited) {
+							add_call(5, NULL, path, n_initial_visited, n_visited+1);
+							add_call(1, path->to, NULL, n_initial_visited, n_visited+1);
+							add_call(3, NULL, path, n_initial_visited, n_visited+1);
+						}
 					}
 				}
 			}
 			else {
-				printf("Circuit ");
-				print_node(start);
-				for (q_node = q_nodes; q_node < q_node_out; q_node++) {
-					putchar(' ');
-					print_node(*q_node);
-				}
-				puts("");
-				found = 1;
+				print_circuit(start, n_visited, &n_visited_min);
 			}
 		}
 		else if (type == 2) {
+			if (n_initial_visited < n_initial_paths || *(q_node_out-1) != start) {
+				if (n_visited < n_visited_min) {
+					for (path = node->paths; path < node->path_out; path++) {
+						if (!path->visited) {
+							if (path->edge) {
+								add_call(6, NULL, path, n_initial_visited+1, n_visited+1);
+								add_call(2, path->to, NULL, n_initial_visited+1, n_visited+1);
+								add_call(4, NULL, path, n_initial_visited+1, n_visited+1);
+							}
+							else {
+								add_call(6, NULL, path, n_initial_visited, n_visited+1);
+								add_call(2, path->to, NULL, n_initial_visited, n_visited+1);
+								add_call(4, NULL, path, n_initial_visited, n_visited+1);
+							}
+						}
+					}
+				}
+			}
+			else {
+				print_circuit(start, n_visited, &n_visited_min);
+			}
+		}
+		else if (type == 3) {
+			if (path->edge) {
+				path->edge->visited++;
+			}
 			path->visited = 1;
-			*q_node_top++ = path->to;
+			*q_node_out++ = path->to;
+		}
+		else if (type == 4) {
+			path->visited = 1;
+			*q_node_out++ = path->to;
+		}
+		else if (type == 5) {
+			q_node_out--;
+			path->visited = 0;
+			if (path->edge) {
+				path->edge->visited--;
+			}
 		}
 		else {
-			q_node_top--;
+			q_node_out--;
 			path->visited = 0;
 		}
 	}
 }
 
-void add_call(int type, node_t *node, path_t *path) {
+void add_call(int type, node_t *node, path_t *path, unsigned long n_initial_visited, unsigned long n_visited) {
 	call_top++;
 	call_top->type = type;
 	call_top->node = node;
 	call_top->path = path;
+	call_top->n_initial_visited = n_initial_visited;
+	call_top->n_visited = n_visited;
+}
+
+void print_circuit(node_t *start, unsigned long n_visited, unsigned long *n_visited_min) {
+node_t **q_node;
+	printf("Circuit ");
+	print_node(start);
+	for (q_node = q_nodes; q_node < q_node_out; q_node++) {
+		putchar(' ');
+		print_node(*q_node);
+	}
+	printf("\nLength %lu\n", n_visited);
+	if (*n_visited_min > n_visited) {
+		*n_visited_min = n_visited;
+	}
 }
 
 void print_node(node_t *node) {
-	printf("S%luA%lu", node->street, node->avenue);
+	printf("S%lu/A%lu", node->street, node->avenue);
 }
 
 void free_data(void) {
 node_t *node;
+	if (calls) {
+		free(calls);
+	}
 	if (q_nodes) {
 		free(q_nodes);
 	}
