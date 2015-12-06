@@ -5,9 +5,9 @@ Implements the solution described in page 5 of below document for both problems:
 
 http://testoptimal.com/ref/GraphTheory%20Techniques%20In%20Model-Based%20Testing.pdf
 
-For each node that has positive polarity, a BFS is performed to find the nearest node that has negative polarity and create the additional edges between both nodes.
+For each node that has positive polarity, a BFS is performed to find the nearest node that has negative polarity and create the additional arcs between both nodes.
 
-Once all nodes have a polarity equal to 0, a DFS is performed to visit all arcs/edges from selected starting node and complete a cycle (the optimal solution is searched).
+Once all nodes have a polarity equal to 0, a DFS is performed to visit all edges/arcs from selected starting node and complete a cycle (the search is exhaustive).
 
 Posted as solution to the Reddit Dailyprogrammer Hard Challenge #243:
 
