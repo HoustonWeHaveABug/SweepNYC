@@ -57,24 +57,28 @@ static int read_edges(void);
 static int read_edge(const int *, int);
 static int read_separator(void);
 static int reduce_polarity(node_t *);
+static void add_polarity_nodes(node_t *);
+static void add_polarity_node(node_t *, node_t *);
 static int add_path(node_t *, edge_t *, node_t *);
 static void set_path(path_t *, node_t *, edge_t *, node_t *);
 static void process_call(call_t *);
+static void dispatch_call(int, node_t *, path_t *);
 static void add_node_calls(node_t *, node_t *);
 static void add_path_calls1(path_t *);
-static void add_path_calls2(path_t *);
-static void add_path_calls3(node_t *, path_t *);
-static void evaluate_path(node_t *, path_t *, node_t *);
-void add_q_node(node_t *, node_t *);
-void check_distance(path_t *, node_t *, int);
-int check_edge_manhattan(edge_t *);
-int check_edge_chinese(edge_t *);
-void add_evaluation(path_t *, node_t *, int, int, int, int);
+static void add_path_calls2(node_t *, path_t *);
+static int add_q_nodes(node_t *, node_t *);
+static void add_q_node(node_t *, node_t *);
+static void check_distance(path_t *, node_t *, int);
+static int check_edge_manhattan(edge_t *);
+static int check_edge_chinese(edge_t *);
+static void add_evaluation(node_t *, path_t *, int, int);
+static void set_evaluation(evaluation_t *, path_t *, int, int);
+static void reset_node(node_t *);
 static int compare_evaluations(const void *, const void *);
-static void add_path_calls(node_t *, path_t *, int, int);
+static void add_calls(node_t *, path_t *, node_t *);
 static void add_call(int, node_t *, path_t *);
+static void set_call(call_t *, int, node_t *, path_t *);
 static void link_paths(path_t *, path_t *);
-static void check_low_visited(void);
 static void print_node(const node_t *);
 static void free_data(void);
 
@@ -320,16 +324,7 @@ static int reduce_polarity(node_t *positive) {
 	q_nodes[0] = positive;
 	n_q_nodes = 1;
 	for (i = 0; i < n_q_nodes && q_nodes[i]->polarity >= 0; ++i) {
-		int k;
-		node_t *from = q_nodes[i];
-		for (k = 0; k < from->n_paths; ++k) {
-			node_t *to = from->paths[k].to;
-			if (!to->visited) {
-				to->visited = 1;
-				to->from = from;
-				q_nodes[n_q_nodes++] = to;
-			}
-		}
+		add_polarity_nodes(q_nodes[i]);
 	}
 	for (j = n_q_nodes; j--; ) {
 		q_nodes[j]->visited = 0;
@@ -346,6 +341,21 @@ static int reduce_polarity(node_t *positive) {
 	fputs("Cannot reduce polarity\n", stderr);
 	fflush(stderr);
 	return 0;
+}
+
+static void add_polarity_nodes(node_t *from) {
+	int i;
+	for (i = 0; i < from->n_paths; ++i) {
+		add_polarity_node(from, from->paths[i].to);
+	}
+}
+
+static void add_polarity_node(node_t *from, node_t *to) {
+	if (!to->visited) {
+		to->visited = 1;
+		to->from = from;
+		q_nodes[n_q_nodes++] = to;
+	}
 }
 
 static int add_path(node_t *from, edge_t *edge, node_t *to) {
@@ -387,28 +397,25 @@ static void set_path(path_t *path, node_t *from, edge_t *edge, node_t *to) {
 }
 
 static void process_call(call_t *call) {
-	int type = call->type;
-	path_t *path = call->path;
+	dispatch_call(call->type, call->start, call->path);
+}
+
+static void dispatch_call(int type, node_t *start, path_t *path) {
 	if (type == 0) {
-		node_t *start = call->start, *node = path->to;
-		if (low_bound || node != start) {
+		node_t *from = path->to;
+		if (low_bound || from != start) {
 			if (n_visited+low_bound < min_visited) {
-				int n_calls_bak = n_calls, i, j;
-				if (!n_visited || node != start) {
-					add_node_calls(start, node);
+				if (!n_visited || from != start) {
+					add_node_calls(start, from);
 				}
 				else {
+					int n_calls_bak = n_calls, i;
 					for (i = n_visited; i > 0; --i) {
 						add_node_calls(q_paths[i]->from, q_paths[i]->from);
 						if (min_visited <= n_paths || n_calls > n_calls_bak) {
 							break;
 						}
 					}
-				}
-				for (i = n_calls_bak, j = n_calls-1; i < j; ++i, --j) {
-					call_t tmp = calls[i];
-					calls[i] = calls[j];
-					calls[j] = tmp;
 				}
 			}
 		}
@@ -441,29 +448,26 @@ static void process_call(call_t *call) {
 	}
 	else if (type == 1) {
 		++path->from->n_visits;
-		++path->edge->visited;
 		path->visited = 1;
-		--low_bound;
+		if (start) {
+			++path->edge->visited;
+			--low_bound;
+		}
 		q_paths[++n_visited] = path;
 	}
 	else if (type == 2) {
-		++path->from->n_visits;
-		path->visited = 1;
-		q_paths[++n_visited] = path;
-	}
-	else if (type == 3) {
 		--n_visited;
-		++low_bound;
-		path->visited = 0;
-		--path->edge->visited;
-		--path->from->n_visits;
-		check_low_visited();
-	}
-	else {
-		--n_visited;
+		if (start) {
+			++low_bound;
+			--path->edge->visited;
+		}
 		path->visited = 0;
 		--path->from->n_visits;
-		check_low_visited();
+		if (n_visited < low_visited) {
+			low_visited = n_visited;
+			printf("low_visited %d\n", low_visited);
+			fflush(stdout);
+		}
 	}
 }
 
@@ -473,24 +477,24 @@ static void add_node_calls(node_t *start, node_t *from) {
 	for (i = from->n_paths; i--; ) {
 		add_path_calls1(from->paths+i);
 	}
-	for (i = from->n_paths; i--; ) {
-		add_path_calls2(from->paths+i);
-	}
 	if (n_visited+1+low_bound < min_visited) {
 		for (i = from->n_paths; i--; ) {
-			add_path_calls3(start, from->paths+i);
+			add_path_calls2(start, from->paths+i);
 		}
 	}
 	if (n_evaluations) {
 		for (i = from->n_paths; i--; ) {
-			node_t *to = from->paths[i].to;
-			if (to->visited) {
-				to->visited = 0;
-			}
+			reset_node(from->paths[i].to);
 		}
 		qsort(evaluations, (size_t)n_evaluations, sizeof(evaluation_t), compare_evaluations);
-		for (i = 0; i < n_evaluations && i < n_choices; i++) {
-			add_path_calls(start, evaluations[i].path, evaluations[i].call1, evaluations[i].call3);
+		if (low_bound) {
+			i = n_evaluations < n_choices ? 0:n_evaluations-n_choices;
+			for (; i < n_evaluations; i++) {
+				add_calls(start, evaluations[i].path, evaluations[i].distance ? NULL:start);
+			}
+		}
+		else {
+			add_calls(start, evaluations[n_evaluations-1].path, NULL);
 		}
 	}
 }
@@ -498,77 +502,45 @@ static void add_node_calls(node_t *start, node_t *from) {
 static void add_path_calls1(path_t *path) {
 	edge_t *edge = path->edge;
 	node_t *to = path->to;
-	if (check_edge(edge) && edge->type != '|' && edge->type != '-' && !to->visited && !path->visited) {
-		add_evaluation(path, to, 0, to->n_visits*2, 1, 3);
+	if (check_edge(edge) && !to->visited && !path->visited) {
+		add_evaluation(to, path, 0, edge->type == '-' || edge->type == '|' ? to->n_visits*2+1:to->n_visits*2);
 	}
 }
 
-static void add_path_calls2(path_t *path) {
-	edge_t *edge = path->edge;
-	node_t *to = path->to;
-	if (check_edge(edge) && (edge->type == '|' || edge->type == '-') && !to->visited && !path->visited) {
-		add_evaluation(path, to, 0, to->n_visits*2+1, 1, 3);
+static void add_path_calls2(node_t *start, path_t *evaluated) {
+	node_t *to = evaluated->to;
+	if (!check_edge(evaluated->edge) && !to->visited && !evaluated->visited) {
+		int i, j;
+		to->visited = 2;
+		to->distance = 1;
+		q_nodes[0] = to;
+		n_q_nodes = 1;
+		for (i = 0; i < n_q_nodes && !add_q_nodes(start, q_nodes[i]); ++i);
+		for (j = n_q_nodes; j--; ) {
+			q_nodes[j]->visited ^= 2;
+		}
+		check_distance(evaluated, to, i < n_q_nodes ? q_nodes[i]->distance:q_nodes[n_q_nodes-1]->distance);
 	}
 }
 
-static void add_path_calls3(node_t *start, path_t *path) {
-	node_t *to = path->to;
-	if (!check_edge(path->edge) && !to->visited && !path->visited) {
-		evaluate_path(start, path, to);
+static int add_q_nodes(node_t *start, node_t *from) {
+	int i;
+	if (!low_bound && from == start) {
+		return 1;
 	}
-}
-
-static void evaluate_path(node_t *start, path_t *evaluated, node_t *to) {
-	int i, j;
-	to->visited = 2;
-	to->distance = 1;
-	q_nodes[0] = to;
-	n_q_nodes = 1;
-	if (low_bound) {
-		for (i = 0; i < n_q_nodes; ++i) {
-			node_t *from = q_nodes[i];
-			int k;
-			for (k = 0; k < from->n_paths; ++k) {
-				path_t *path = from->paths+k;
-				if (!path->visited) {
-					if (check_edge(path->edge)) {
-						break;
-					}
-					add_q_node(from, path->to);
-				}
+	for (i = 0; i < from->n_paths; ++i) {
+		path_t *path = from->paths+i;
+		if (!path->visited) {
+			if (check_edge(path->edge)) {
+				return 1;
 			}
-			if (k < from->n_paths) {
-				break;
-			}
+			add_q_node(from, path->to);
 		}
 	}
-	else {
-		for (i = 0; i < n_q_nodes; ++i) {
-			int k;
-			node_t *from = q_nodes[i];
-			if (from == start) {
-				break;
-			}
-			for (k = 0; k < from->n_paths; ++k) {
-				path_t *path = from->paths+k;
-				if (!path->visited) {
-					add_q_node(from, path->to);
-				}
-			}
-		}
-	}
-	for (j = n_q_nodes; j--; ) {
-		q_nodes[j]->visited ^= 2;
-	}
-	if (i == n_q_nodes) {
-		check_distance(evaluated, to, q_nodes[n_q_nodes-1]->distance);
-	}
-	else {
-		check_distance(evaluated, to, q_nodes[i]->distance);
-	}
+	return 0;
 }
 
-void add_q_node(node_t *from, node_t *to) {
+static void add_q_node(node_t *from, node_t *to) {
 	if (!(to->visited & 2)) {
 		to->visited |= 2;
 		to->distance = from->distance+1;
@@ -576,64 +548,72 @@ void add_q_node(node_t *from, node_t *to) {
 	}
 }
 
-void check_distance(path_t *path, node_t *to, int distance) {
+static void check_distance(path_t *path, node_t *to, int distance) {
 	if (n_visited+distance+low_bound < min_visited) {
-		add_evaluation(path, to, distance, to->n_visits*2, 2, 4);
+		add_evaluation(to, path, distance, to->n_visits*2);
 	}
 }
 
-int check_edge_manhattan(edge_t *edge) {
+static int check_edge_manhattan(edge_t *edge) {
 	return edge != NULL;
 }
 
-int check_edge_chinese(edge_t *edge) {
+static int check_edge_chinese(edge_t *edge) {
 	return edge && !edge->visited;
 }
 
-void add_evaluation(path_t *path, node_t *to, int distance, int rank, int call1, int call3) {
-	evaluation_t *evaluation = evaluations+n_evaluations;
+static void add_evaluation(node_t *to, path_t *path, int distance, int rank) {
+	to->visited = 1;
+	set_evaluation(evaluations+n_evaluations, path, distance, rank);
+	n_evaluations++;
+}
+
+static void set_evaluation(evaluation_t *evaluation, path_t *path, int distance, int rank) {
 	evaluation->path = path;
 	evaluation->distance = distance;
 	evaluation->rank = rank;
-	evaluation->call1 = call1;
-	evaluation->call3 = call3;
-	n_evaluations++;
-	to->visited = 1;
+}
+
+static void reset_node(node_t *node) {
+	if (node->visited) {
+		node->visited = 0;
+	}
 }
 
 static int compare_evaluations(const void *a, const void *b) {
 	const evaluation_t *evaluation_a = (const evaluation_t *)a, *evaluation_b = (const evaluation_t *)b;
 	if (evaluation_a->distance != evaluation_b->distance) {
-		return evaluation_a->distance-evaluation_b->distance;
+		return evaluation_b->distance-evaluation_a->distance;
 	}
-	return evaluation_a->rank-evaluation_b->rank;
+	if (evaluation_a->rank != evaluation_b->rank) {
+		return evaluation_b->rank-evaluation_a->rank;
+	}
+	if (evaluation_a->path < evaluation_b->path) {
+		return -1;
+	}
+	return 1;
 }
 
-static void add_path_calls(node_t *start, path_t *path, int type1, int type3) {
-	add_call(type1, NULL, path);
+static void add_calls(node_t *start, path_t *path, node_t *mark) {
+	add_call(2, mark, path);
 	add_call(0, start, path);
-	add_call(type3, NULL, path);
+	add_call(1, mark, path);
 }
 
 static void add_call(int type, node_t *start, path_t *path) {
-	call_t *call = calls+n_calls;
+	set_call(calls+n_calls, type, start, path);
+	++n_calls;
+}
+
+static void set_call(call_t *call, int type, node_t *start, path_t *path) {
 	call->type = type;
 	call->start = start;
 	call->path = path;
-	++n_calls;
 }
 
 static void link_paths(path_t *path_a, path_t *path_b) {
 	path_a->next = path_b;
 	path_b->last = path_a;
-}
-
-static void check_low_visited(void) {
-	if (n_visited < low_visited) {
-		low_visited = n_visited;
-		printf("low_visited %d\n", low_visited);
-		fflush(stdout);
-	}
 }
 
 static void print_node(const node_t *node) {
