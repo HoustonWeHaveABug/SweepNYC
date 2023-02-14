@@ -585,19 +585,11 @@ static int get_distance_next(node_t *start, path_t *path) {
 	set_distances(start, path);
 	if (path->reverse) {
 		set_distances(start, path->reverse);
-		if (path->distance_start == -1) {
+		if (path->reverse->distance_next < path->distance_next) {
 			path->distance_next = path->reverse->distance_next;
-			path->to_start = path->reverse->to_start;
 		}
-		else {
-			if (path->reverse->distance_start != -1) {
-				if (path->reverse->distance_next < path->distance_next) {
-					path->distance_next = path->reverse->distance_next;
-				}
-				if (path->reverse->to_start < path->to_start) {
-					path->to_start = path->reverse->to_start;
-				}
-			}
+		if (path->reverse->to_start < path->to_start) {
+			path->to_start = path->reverse->to_start;
 		}
 	}
 	return path->distance_next;
@@ -606,9 +598,9 @@ static int get_distance_next(node_t *start, path_t *path) {
 static void set_distances(node_t *start, path_t *path) {
 	int i;
 	node_t *to = path->to;
-	start->distance = -1;
 	path->edge->visited = 1;
 	path->visited = 1;
+	start->distance = -1;
 	init_target_nodes(to);
 	for (i = 0; i < n_q_nodes && !add_target_nodes(start, q_nodes[i]); ++i);
 	if (i < n_q_nodes) {
@@ -618,20 +610,22 @@ static void set_distances(node_t *start, path_t *path) {
 			for (++i; i < n_q_nodes && start->distance == -1; ++i) {
 				add_target_nodes(start, q_nodes[i]);
 			}
+			if (start->distance == -1) {
+				start->distance = q_nodes[n_q_nodes-1]->distance;
+			}
 		}
 	}
 	else {
 		path->distance_next = start->distance;
 		path->to_start = 1;
 	}
-	start->distance = q_nodes[n_q_nodes-1]->distance;
 	path->distance_start = start->distance;
 	reset_q_nodes();
 	reset_path(path);
 }
 
 static int get_delta(path_t *path) {
-	if (path->reverse && (path->distance_start == -1 || path->reverse->distance_start < path->distance_start)) {
+	if (path->reverse && path->reverse->distance_start < path->distance_start) {
 		return path->reverse->distance_start-path->distance_next;
 	}
 	return path->distance_start-path->distance_next;
