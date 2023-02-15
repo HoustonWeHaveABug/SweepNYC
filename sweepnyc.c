@@ -71,15 +71,18 @@ static path_t *get_reverse_path(node_t *, node_t *);
 static int add_from_paths(node_t *);
 static void process_call(call_t *);
 static void dispatch_call(int, node_t *, path_t *);
+static int add_target_nodes(node_t *, node_t *);
+static int add_target_node(node_t *, path_t *);
 static void add_bfs_paths(node_t *);
 static void add_bfs_path(path_t *);
 static void add_q_node2(node_t *);
 static int get_distance_next(node_t *, path_t *);
 static void set_distances(node_t *, path_t *);
+static int add_distance_nodes1(node_t *);
+static int add_distance_node1(node_t *, path_t *);
+static void add_distance_nodes2(node_t *);
+static void add_distance_node2(node_t *, path_t *);
 static int get_delta(path_t *);
-static void init_target_nodes(node_t *);
-static int add_target_nodes(node_t *, node_t *);
-static int add_target_node(node_t *, path_t *);
 static void add_q_node1(node_t *, node_t *);
 static void add_node_calls(node_t *, node_t *, int);
 static void add_path_calls1(path_t *);
@@ -95,6 +98,7 @@ static int add_from_path(path_t *);
 static void set_path(path_t *, node_t *, edge_t *, node_t *);
 static void reset_path(path_t *);
 static void link_paths(path_t *, path_t *);
+static void init_q_nodes(node_t *);
 static void reset_q_nodes(void);
 static void print_node(const node_t *);
 static void reset_node(node_t *);
@@ -439,7 +443,7 @@ static void dispatch_call(int type, node_t *start, path_t *path) {
 			int distance1, distance2;
 			if (min_q_paths <= n_paths || !n_q_paths) {
 				int i;
-				init_target_nodes(from);
+				init_q_nodes(from);
 				for (i = 0; i < n_q_nodes && !add_target_nodes(start, q_nodes[i]); ++i);
 				reset_q_nodes();
 				if (i < n_q_nodes) {
@@ -456,23 +460,25 @@ static void dispatch_call(int type, node_t *start, path_t *path) {
 					}
 					reset_q_nodes();
 					if (n_bfs_paths == low_bound) {
-						int to_start = 0;
 						distance2 = 0;
-						for (i = n_bfs_paths; i--; ) {
-							distance2 += get_distance_next(start, bfs_paths[i]);
-							if (!to_start) {
-								to_start = bfs_paths[i]->to_start;
-							}
-						}
-						if (low_bound && !to_start) {
-							int min_delta = n_nodes;
+						if (min_q_paths <= n_paths) {
+							int to_start = 0;
 							for (i = n_bfs_paths; i--; ) {
-								int delta = get_delta(bfs_paths[i]);
-								if (delta < min_delta) {
-									min_delta = delta;
+								distance2 += get_distance_next(start, bfs_paths[i]);
+								if (!to_start) {
+									to_start = bfs_paths[i]->to_start;
 								}
 							}
-							distance2 += min_delta;
+							if (low_bound && !to_start) {
+								int min_delta = n_nodes;
+								for (i = n_bfs_paths; i--; ) {
+									int delta = get_delta(bfs_paths[i]);
+									if (delta < min_delta) {
+										min_delta = delta;
+									}
+								}
+								distance2 += min_delta;
+							}
 						}
 					}
 					else {
@@ -556,6 +562,25 @@ static void dispatch_call(int type, node_t *start, path_t *path) {
 	}
 }
 
+static int add_target_nodes(node_t *start, node_t *from) {
+	int i;
+	if (!low_bound && from == start) {
+		return 1;
+	}
+	for (i = 0; i < from->n_to_paths && !add_target_node(from, from->to_paths+i); ++i);
+	return i < from->n_to_paths;
+}
+
+static int add_target_node(node_t *from, path_t *path) {
+	if (!path->visited) {
+		if (check_edge(path->edge)) {
+			return 1;
+		}
+		add_q_node1(from, path->to);
+	}
+	return 0;
+}
+
 static void add_bfs_paths(node_t *from) {
 	int i;
 	for (i = 0; i < from->n_from_paths; ++i) {
@@ -585,11 +610,13 @@ static int get_distance_next(node_t *start, path_t *path) {
 	set_distances(start, path);
 	if (path->reverse) {
 		set_distances(start, path->reverse);
-		if (path->reverse->distance_next < path->distance_next) {
-			path->distance_next = path->reverse->distance_next;
-		}
-		if (path->reverse->to_start < path->to_start) {
-			path->to_start = path->reverse->to_start;
+		if (path->reverse->distance_start != -1) {
+			if (path->reverse->distance_next < path->distance_next) {
+				path->distance_next = path->reverse->distance_next;
+			}
+			if (path->reverse->to_start < path->to_start) {
+				path->to_start = path->reverse->to_start;
+			}
 		}
 	}
 	return path->distance_next;
@@ -601,18 +628,13 @@ static void set_distances(node_t *start, path_t *path) {
 	path->edge->visited = 1;
 	path->visited = 1;
 	start->distance = -1;
-	init_target_nodes(to);
-	for (i = 0; i < n_q_nodes && !add_target_nodes(start, q_nodes[i]); ++i);
+	init_q_nodes(to);
+	for (i = 0; i < n_q_nodes && !add_distance_nodes1(q_nodes[i]); ++i);
 	if (i < n_q_nodes) {
 		path->distance_next = q_nodes[i]->distance;
 		path->to_start = 0;
-		if (start->distance == -1) {
-			for (++i; i < n_q_nodes && start->distance == -1; ++i) {
-				add_target_nodes(start, q_nodes[i]);
-			}
-			if (start->distance == -1) {
-				start->distance = q_nodes[n_q_nodes-1]->distance;
-			}
+		for (; i < n_q_nodes && start->distance == -1; ++i) {
+			add_distance_nodes2(q_nodes[i]);
 		}
 	}
 	else {
@@ -624,30 +646,13 @@ static void set_distances(node_t *start, path_t *path) {
 	reset_path(path);
 }
 
-static int get_delta(path_t *path) {
-	if (path->reverse && path->reverse->distance_start < path->distance_start) {
-		return path->reverse->distance_start-path->distance_next;
-	}
-	return path->distance_start-path->distance_next;
-}
-
-static void init_target_nodes(node_t *node) {
-	node->visited = 1;
-	node->distance = 0;
-	q_nodes[0] = node;
-	n_q_nodes = 1;
-}
-
-static int add_target_nodes(node_t *start, node_t *from) {
+static int add_distance_nodes1(node_t *from) {
 	int i;
-	if (!low_bound && from == start) {
-		return 1;
-	}
-	for (i = 0; i < from->n_to_paths && !add_target_node(from, from->to_paths+i); ++i);
+	for (i = 0; i < from->n_to_paths && !add_distance_node1(from, from->to_paths+i); ++i);
 	return i < from->n_to_paths;
 }
 
-static int add_target_node(node_t *from, path_t *path) {
+static int add_distance_node1(node_t *from, path_t *path) {
 	if (!path->visited) {
 		if (check_edge(path->edge)) {
 			return 1;
@@ -655,6 +660,26 @@ static int add_target_node(node_t *from, path_t *path) {
 		add_q_node1(from, path->to);
 	}
 	return 0;
+}
+
+static void add_distance_nodes2(node_t *from) {
+	int i;
+	for (i = 0; i < from->n_to_paths; ++i) {
+		add_distance_node2(from, from->to_paths+i);
+	}
+}
+
+static void add_distance_node2(node_t *from, path_t *path) {
+	if (!path->visited) {
+		add_q_node1(from, path->to);
+	}
+}
+
+static int get_delta(path_t *path) {
+	if (path->reverse && path->reverse->distance_start != -1 && path->reverse->distance_start < path->distance_start) {
+		return path->reverse->distance_start-path->distance_next;
+	}
+	return path->distance_start-path->distance_next;
 }
 
 static void add_q_node1(node_t *from, node_t *to) {
@@ -843,6 +868,13 @@ static void reset_path(path_t *path) {
 static void link_paths(path_t *path_a, path_t *path_b) {
 	path_a->next = path_b;
 	path_b->last = path_a;
+}
+
+static void init_q_nodes(node_t *node) {
+	node->visited = 1;
+	node->distance = 0;
+	q_nodes[0] = node;
+	n_q_nodes = 1;
 }
 
 static void reset_q_nodes(void) {
