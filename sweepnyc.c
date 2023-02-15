@@ -71,8 +71,6 @@ static path_t *get_reverse_path(node_t *, node_t *);
 static int add_from_paths(node_t *);
 static void process_call(call_t *);
 static void dispatch_call(int, node_t *, path_t *);
-static int add_target_nodes(node_t *, node_t *);
-static int add_target_node(node_t *, path_t *);
 static void add_bfs_paths(node_t *);
 static void add_bfs_path(path_t *);
 static void add_q_node2(node_t *);
@@ -87,18 +85,17 @@ static void add_q_node1(node_t *, node_t *);
 static void add_node_calls(node_t *, node_t *, int);
 static void add_path_calls1(path_t *);
 static void add_path_calls2(node_t *, path_t *, int);
-static int add_evaluation_nodes(node_t *, node_t *);
-static int add_evaluation_node(node_t *, path_t *);
 static void add_q_node3(node_t *, node_t *);
 static void check_distance(path_t *, node_t *, int);
-static int check_edge_manhattan(edge_t *);
-static int check_edge_chinese(edge_t *);
+static int add_target_nodes(node_t *, node_t *, void (*)(node_t *, node_t *));
+static int add_target_node(node_t *, path_t *, void (*)(node_t *, node_t *));
+static int check_edge(edge_t *);
 static int add_to_path(node_t *, edge_t *, node_t *);
 static int add_from_path(path_t *);
 static void set_path(path_t *, node_t *, edge_t *, node_t *);
 static void reset_path(path_t *);
 static void link_paths(path_t *, path_t *);
-static void init_q_nodes(node_t *);
+static void init_q_nodes(node_t *, int, int);
 static void reset_q_nodes(void);
 static void print_node(const node_t *);
 static void reset_node(node_t *);
@@ -111,16 +108,15 @@ static int compare_evaluations(const void *, const void *);
 static void free_data(void);
 static void free_node(node_t *);
 
-static int n_avenues, n_nodes, n_open_edges, n_initial_paths, n_paths, low_bound, n_choices, n_q_nodes, min_q_paths, n_q_paths, low_q_paths, n_calls, n_bfs_paths, n_evaluations;
+static int n_avenues, n_nodes, n_open_edges, n_initial_paths, n_paths, manhattan, low_bound, n_choices, n_q_nodes, min_q_paths, n_q_paths, low_q_paths, n_calls, n_bfs_paths, n_evaluations;
 static edge_t *edges = NULL, *current_edge;
 static path_t **q_paths = NULL, **bfs_paths;
 static node_t *nodes = NULL, *current_node, **q_nodes = NULL;
 static call_t *calls = NULL;
 static evaluation_t evaluations[MAX_EVALUATIONS];
-static int (*check_edge)(edge_t *);
 
 int main(void) {
-	int n_streets, start_street, start_avenue, n_edges, manhattan, i;
+	int n_streets, start_street, start_avenue, n_edges, i;
 	path_t path;
 	node_t *start;
 	if (scanf("%d", &n_streets) != 1 || n_streets < 1) {
@@ -185,12 +181,10 @@ int main(void) {
 	}
 	if (manhattan) {
 		low_bound = n_initial_paths;
-		check_edge = check_edge_manhattan;
 		printf("Number of initial paths %d\n", n_initial_paths);
 	}
 	else {
 		low_bound = n_open_edges;
-		check_edge = check_edge_chinese;
 		printf("Number of open edges %d\n", n_open_edges);
 	}
 	fflush(stdout);
@@ -438,13 +432,13 @@ static void process_call(call_t *call) {
 
 static void dispatch_call(int type, node_t *start, path_t *path) {
 	if (type == 0) {
+		int i;
 		node_t *from = path->to;
 		if (low_bound || from != start) {
 			int distance1, distance2;
 			if (min_q_paths <= n_paths || !n_q_paths) {
-				int i;
-				init_q_nodes(from);
-				for (i = 0; i < n_q_nodes && !add_target_nodes(start, q_nodes[i]); ++i);
+				init_q_nodes(from, 1, 0);
+				for (i = 0; i < n_q_nodes && !add_target_nodes(start, q_nodes[i], add_q_node1); ++i);
 				reset_q_nodes();
 				if (i < n_q_nodes) {
 					distance1 = q_nodes[i]->distance;
@@ -500,7 +494,7 @@ static void dispatch_call(int type, node_t *start, path_t *path) {
 					add_node_calls(start, from, distance2);
 				}
 				else {
-					int n_calls_bak = n_calls, i;
+					int n_calls_bak = n_calls;
 					for (i = n_q_paths; i > 0; --i) {
 						add_node_calls(q_paths[i]->from, q_paths[i]->from, distance2);
 						if (min_q_paths <= n_paths || n_calls > n_calls_bak) {
@@ -511,7 +505,6 @@ static void dispatch_call(int type, node_t *start, path_t *path) {
 			}
 		}
 		else {
-			int i;
 			for (i = 0; i < n_q_paths; ++i) {
 				link_paths(q_paths[i], q_paths[i+1]);
 			}
@@ -562,25 +555,6 @@ static void dispatch_call(int type, node_t *start, path_t *path) {
 	}
 }
 
-static int add_target_nodes(node_t *start, node_t *from) {
-	int i;
-	if (!low_bound && from == start) {
-		return 1;
-	}
-	for (i = 0; i < from->n_to_paths && !add_target_node(from, from->to_paths+i); ++i);
-	return i < from->n_to_paths;
-}
-
-static int add_target_node(node_t *from, path_t *path) {
-	if (!path->visited) {
-		if (check_edge(path->edge)) {
-			return 1;
-		}
-		add_q_node1(from, path->to);
-	}
-	return 0;
-}
-
 static void add_bfs_paths(node_t *from) {
 	int i;
 	for (i = 0; i < from->n_from_paths; ++i) {
@@ -628,7 +602,7 @@ static void set_distances(node_t *start, path_t *path) {
 	path->edge->visited = 1;
 	path->visited = 1;
 	start->distance = -1;
-	init_q_nodes(to);
+	init_q_nodes(to, 1, 0);
 	for (i = 0; i < n_q_nodes && !add_distance_nodes1(q_nodes[i]); ++i);
 	if (i < n_q_nodes) {
 		path->distance_next = q_nodes[i]->distance;
@@ -734,11 +708,8 @@ static void add_path_calls2(node_t *start, path_t *evaluated, int distance) {
 		if (!to->visited) {
 			int i, j;
 			evaluated->visited = 1;
-			to->visited = 2;
-			to->distance = distance;
-			q_nodes[0] = to;
-			n_q_nodes = 1;
-			for (i = 0; i < n_q_nodes && !add_evaluation_nodes(start, q_nodes[i]); ++i);
+			init_q_nodes(to, 2, distance);
+			for (i = 0; i < n_q_nodes && !add_target_nodes(start, q_nodes[i], add_q_node3); ++i);
 			for (j = n_q_nodes; j--; ) {
 				q_nodes[j]->visited ^= 2;
 			}
@@ -755,25 +726,6 @@ static void add_path_calls2(node_t *start, path_t *evaluated, int distance) {
 	}
 }
 
-static int add_evaluation_nodes(node_t *start, node_t *from) {
-	int i;
-	if (!low_bound && from == start) {
-		return 1;
-	}
-	for (i = 0; i < from->n_to_paths && !add_evaluation_node(from, from->to_paths+i); ++i);
-	return i < from->n_to_paths;
-}
-
-static int add_evaluation_node(node_t *from, path_t *path) {
-	if (!path->visited) {
-		if (check_edge(path->edge)) {
-			return 1;
-		}
-		add_q_node3(from, path->to);
-	}
-	return 0;
-}
-
 static void add_q_node3(node_t *from, node_t *to) {
 	if (!(to->visited & 2)) {
 		to->visited |= 2;
@@ -788,12 +740,27 @@ static void check_distance(path_t *path, node_t *to, int distance) {
 	}
 }
 
-static int check_edge_manhattan(edge_t *edge) {
-	return edge != NULL;
+static int add_target_nodes(node_t *start, node_t *from, void (*add_q_node)(node_t *, node_t *)) {
+	int i;
+	if (!low_bound && from == start) {
+		return 1;
+	}
+	for (i = 0; i < from->n_to_paths && !add_target_node(from, from->to_paths+i, add_q_node); ++i);
+	return i < from->n_to_paths;
 }
 
-static int check_edge_chinese(edge_t *edge) {
-	return edge && !edge->visited;
+static int add_target_node(node_t *from, path_t *path, void (*add_q_node)(node_t *, node_t *)) {
+	if (!path->visited) {
+		if (check_edge(path->edge)) {
+			return 1;
+		}
+		add_q_node(from, path->to);
+	}
+	return 0;
+}
+
+static int check_edge(edge_t *edge) {
+	return edge && (manhattan || !edge->visited);
 }
 
 static int add_to_path(node_t *from, edge_t *edge, node_t *to) {
@@ -870,9 +837,9 @@ static void link_paths(path_t *path_a, path_t *path_b) {
 	path_b->last = path_a;
 }
 
-static void init_q_nodes(node_t *node) {
-	node->visited = 1;
-	node->distance = 0;
+static void init_q_nodes(node_t *node, int visited, int distance) {
+	node->visited = visited;
+	node->distance = distance;
 	q_nodes[0] = node;
 	n_q_nodes = 1;
 }
